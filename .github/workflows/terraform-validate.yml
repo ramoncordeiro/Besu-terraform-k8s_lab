@@ -61,10 +61,6 @@ jobs:
               uses: terraform-linters/setup-tflint@v4
               with:
                 tflint_version: 0.52.0
-            
-            - name: Init TFLint
-              working-directory: ./terraform
-              run: tflint --init
 
             - name: Run TFLint
               working-directory: ./terraform
