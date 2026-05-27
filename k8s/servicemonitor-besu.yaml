@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: besu-metrics
+  namespace: monitoring
+spec: 
+  selector:
+    matchLabels:
+      besu-node: "true"
+  namespaceSelector:
+    any: true
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s

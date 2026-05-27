@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: besu-validator
+  namespace: default
+spec:
+  serviceName: besu-validator
+  replicas: 1
+  selector:
+    matchLabels:
+      app: besu-validator
+  template:
+    metadata:
+      labels:
+        app: besu-validator
+    spec:
+      containers:
+        - name: besu
+          image: hyperledger/besu:25.5.0
+          ports:
+            - containerPort: 30303
+              name: p2p
+            - containerPort: 8545
+              name: rpc
+            - containerPort: 9545
+              name: metrics
+          args:
+            - --genesis-file=/etc/besu/genesis.json
+            - --data-path=/var/lib/besu
+            - --node-private-key-file=/secrets/key
+            - --rpc-http-enabled
+            - --rpc-http-host=0.0.0.0
+            - --host-allowlist=*
+            - --rpc-http-api=ETH,NET,QBFT,ADMIN,WEB3
+            - --metrics-enabled
+            - --metrics-host=0.0.0.0
+            - --min-gas-price=0
+            - --logging=INFO
+          volumeMounts:
+            - name: config
+              mountPath: /etc/besu
+            - name: node-key
+              mountPath: /secrets
+            - name: data
+              mountPath: /var/lib/besu
+      volumes:
+        - name: config
+          configMap:
+            name: besu-config
+        - name: node-key
+          secret:
+            secretName: besu-validator-key
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
