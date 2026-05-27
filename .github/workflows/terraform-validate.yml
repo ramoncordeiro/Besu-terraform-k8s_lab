@@ -19,7 +19,7 @@ jobs:
             - name: Set up Terraform
               uses: hashicorp/setup-terraform@v3
               with:
-                terraform_version: 1.9.0
+                terraform_version: 1.15.5
             
             - name: Terraform Format Check
               working-directory: ./terraform
@@ -35,7 +35,7 @@ jobs:
             - name: Setup Terraform
               uses: hashicorp/setup-terraform@v3
               with:
-                terraform_version: 1.9.0
+                terraform_version: 1.15.5
             
             - name: Terraform Init
               working-directory: ./terraform
@@ -55,7 +55,7 @@ jobs:
             - name: Setup Terraform
               uses: hashicorp/setup-terraform@v3
               with:
-                terraform_version: 1.9.0
+                terraform_version: 1.15.5
             
             - name: Setup TFLint
               uses: terraform-linters/setup-tflint@v4
