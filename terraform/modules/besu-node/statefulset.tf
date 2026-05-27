@@ -15,7 +15,7 @@ locals {
     "--Xdns-enabled=true", #both flags help me to apply dns to nodes for Besu
     "--Xdns-update-enabled=true"
   ]
-  
+
   #boot_args = #var.node_type == "boot" ? ["--bootnode"] : []
 
   static_nodes_args = var.static_nodes_configmap_name != "" ? ["--static-nodes-file=/etc/besu/static-nodes.json"] : []
@@ -33,7 +33,7 @@ resource "kubernetes_stateful_set" "besu_node" {
 
   spec {
     service_name = local.resource_name
-    replicas = var.replicas
+    replicas     = var.replicas
 
     selector {
       match_labels = {
@@ -47,54 +47,54 @@ resource "kubernetes_stateful_set" "besu_node" {
           app = local.resource_name
         }
       }
-    
+
       spec {
         container {
-          name = "app"
+          name  = "app"
           image = var.besu_image
 
           #need to put more ports here
           port {
-              container_port = 30303
-              name = "p2p-tcp"
+            container_port = 30303
+            name           = "p2p-tcp"
           }
           port {
-              container_port = 30303
-              name = "p2p-udp"
-              protocol= "UDP"
+            container_port = 30303
+            name           = "p2p-udp"
+            protocol       = "UDP"
           }
 
           port {
-              container_port = 8545
-              name = "rpc"
+            container_port = 8545
+            name           = "rpc"
           }
           port {
             container_port = 9545
-            name = "metrics"
+            name           = "metrics"
           }
 
           args = local.besu_args
 
           volume_mount {
-            name = "genesis"
+            name       = "genesis"
             mount_path = "/etc/besu"
           }
-          
+
           volume_mount {
-            name = "nodekey" #change
+            name       = "nodekey" #change
             mount_path = "/secrets"
           }
 
           volume_mount {
-            name = "data"
+            name       = "data"
             mount_path = "/var/lib/besu"
           }
-          
-          
-        }
-  
 
-      #volumes that are not PVC (configMap, secret, emptyDir)
+
+        }
+
+
+        #volumes that are not PVC (configMap, secret, emptyDir)
         volume {
           name = "genesis"
           config_map {
@@ -114,9 +114,9 @@ resource "kubernetes_stateful_set" "besu_node" {
 
       }
     }
-  
 
-  ### Dinamyc PVC per POD (volumeCLaimTemplate in YAML)
+
+    ### Dinamyc PVC per POD (volumeCLaimTemplate in YAML)
     volume_claim_template {
       metadata {
         name = "data" #
