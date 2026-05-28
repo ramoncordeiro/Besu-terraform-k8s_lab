@@ -1,0 +1,41 @@
+name: Deploy Local Besu Network
+
+on:
+    push:
+        branches:
+            - main
+
+jobs:
+    terraform-apply:
+        name: Terraform Apply
+        runs-on: [self-hosted, k3s-local]
+        defaults:
+            run:
+                working-directory: terraform
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setup Terraform
+              uses: hashicorp/setup-terraform@v3
+              with:
+                terraform_version: 1.15.5
+            
+            - name: Terraform Init
+              run: terraform init
+            
+            - name: Terraform Apply
+              run: terraform apply -auto-approve
+
+    smoke-test:
+        name: Smoke Test
+        runs-on: [self-hosted, k3s-local]
+        needs: terraform-apply
+            
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Run Smoke Test
+              run:  bash scripts/smoke-test.sh
