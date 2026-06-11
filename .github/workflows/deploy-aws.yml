@@ -1,0 +1,256 @@
+name: Deploy AWS Besu Network
+
+# =============================================================================
+# TRIGGER
+# =============================================================================
+# Esse workflow roda em dois cenários:
+#   1. Push na branch main (deploy automático)
+#   2. Manualmente via botão "Run workflow" no GitHub (workflow_dispatch)
+#
+# Por que workflow_dispatch? Permite testar a infra sem fazer push.
+# =============================================================================
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# =============================================================================
+# PERMISSÕES
+# =============================================================================
+# O workflow precisa escrever no repositório (para salvar state? não,
+# o state do Terraform cloud pode ser local ou remoto).
+# Mas principalmente precisa de permissão para usar GitHub Artifacts.
+# =============================================================================
+
+permissions:
+  contents: read
+
+jobs:
+  # ===========================================================================
+  # JOB 1: DEPLOY DA INFRAESTRUTURA AWS
+  # ===========================================================================
+  # Proposito: criar a EC2 t2.micro, bootstrap k3s, e extrair kubeconfig.
+  # Runner: ubuntu-latest (GitHub Cloud) — agora o cluster está público.
+  # ===========================================================================
+  deploy-infra:
+    name: Provision EC2 and Bootstrap k3s
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/cloud
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+
+      # -----------------------------------------------------------------------
+      # CONFIGURAR CREDENCIAIS AWS
+      # -----------------------------------------------------------------------
+      # Esse action pega os secrets do repositório e exporta como env vars:
+      #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+      # O provider AWS do Terraform lê essas variáveis automaticamente.
+      # -----------------------------------------------------------------------
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1  # ajuste se usar outra região
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+      # -----------------------------------------------------------------------
+      # EXTRAIR OUTPUTS DO TERRAFORM
+      # -----------------------------------------------------------------------
+      # Salvamos IP público e chave privada em arquivos para o próximo job.
+      # `terraform output -raw` evita aspas e formatação do Terraform.
+      # -----------------------------------------------------------------------
+      - name: Save Terraform Outputs
+        run: |
+          mkdir -p ${{ runner.temp }}/aws-outputs
+          terraform output -raw ec2_public_ip > ${{ runner.temp }}/aws-outputs/ec2_public_ip.txt
+          terraform output -raw private_key_pem > ${{ runner.temp }}/aws-outputs/private_key.pem
+          terraform output -raw ssh_command > ${{ runner.temp }}/aws-outputs/ssh_command.txt
+
+      # -----------------------------------------------------------------------
+      # UPLOAD ARTIFACTS (para o próximo job usar)
+      # -----------------------------------------------------------------------
+      - name: Upload AWS Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: aws-outputs
+          path: ${{ runner.temp }}/aws-outputs/
+          retention-days: 1
+
+      # -----------------------------------------------------------------------
+      # ESPERAR O BOOTSTRAP (health check na EC2)
+      # -----------------------------------------------------------------------
+      # O user_data (bootstrap-cluster.sh) demora ~2-3 minutos.
+      # Fazemos polling SSH: tentamos conectar até conseguir.
+      # -----------------------------------------------------------------------
+      - name: Wait for EC2 SSH
+        run: |
+          IP=$(cat ${{ runner.temp }}/aws-outputs/ec2_public_ip.txt)
+          chmod 600 ${{ runner.temp }}/aws-outputs/private_key.pem
+          echo "Aguardando SSH na EC2 (${IP})..."
+          for i in {1..60}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+               -i ${{ runner.temp }}/aws-outputs/private_key.pem \
+               ubuntu@${IP} "echo 'SSH OK'" 2>/dev/null; then
+              echo "EC2 acessível via SSH"
+              break
+            fi
+            echo "Tentativa $i/30..."
+            sleep 10
+          done
+
+      # -----------------------------------------------------------------------
+      # EXTRAIR KUBECONFIG DA EC2
+      # -----------------------------------------------------------------------
+      # O bootstrap-cluster.sh copiou o kubeconfig para /home/ubuntu/.kube/config.
+      # Precisamos trazer esse arquivo para o runner para os próximos jobs
+      # usarem `kubectl` e o provider Kubernetes do Terraform.
+      # -----------------------------------------------------------------------
+      
+      - name: Wait for Kubeconfig to exist
+        run: |
+          IP=$(cat ${{ runner.temp }}/aws-outputs/ec2_public_ip.txt)
+          chmod 600 ${{ runner.temp }}/aws-outputs/private_key.pem
+          echo "Aguardando kubeconfig na EC2 (${IP})..."
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+               -i ${{ runner.temp }}/aws-outputs/private_key.pem \
+               ubuntu@${IP} "test -f ~/.kube/config && echo 'Kubeconfig OK'" 2>/dev/null; then
+              echo "Kubeconfig FOUND"
+              break
+            fi
+            echo "attempt $i/30..."
+            sleep 10
+          done
+
+      - name: Fetch kubeconfig from EC2
+        run: |
+          IP=$(cat ${{ runner.temp }}/aws-outputs/ec2_public_ip.txt)
+          mkdir -p ${{ runner.temp }}/kubeconfig
+          scp -o StrictHostKeyChecking=no \
+              -i ${{ runner.temp }}/aws-outputs/private_key.pem \
+              ubuntu@${IP}:.kube/config \
+              ${{ runner.temp }}/kubeconfig/config
+
+      - name: Upload kubeconfig
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubeconfig
+          path: ${{ runner.temp }}/kubeconfig/config
+          retention-days: 1
+
+  # ===========================================================================
+  # JOB 2: DEPLOY DA REDE BESU NO CLUSTER REMOTO
+  # ===========================================================================
+  # Proposito: usar o kubeconfig da EC2 para aplicar o Terraform local
+  # (o mesmo código que sobe os nós Besu no k3s local).
+  # Runner: ubuntu-latest.
+  # ===========================================================================
+  deploy-besu:
+    name: Deploy Besu Network on Remote k3s
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.5
+
+      # -----------------------------------------------------------------------
+      # BAIXAR ARTIFACTS DO JOB ANTERIOR
+      # -----------------------------------------------------------------------
+      - name: Download kubeconfig
+        uses: actions/download-artifact@v4
+        with:
+          name: kubeconfig
+          path: /tmp/kubeconfig
+
+      - name: Download AWS outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: aws-outputs
+          path: /tmp/aws-outputs
+
+      # -----------------------------------------------------------------------
+      # CONFIGURAR KUBECONFIG
+      # -----------------------------------------------------------------------
+      # O provider Kubernetes do Terraform vai ler o arquivo que passarmos
+      # via variável `kubeconfig_path`. Ajustamos a variável de ambiente
+      # para o caminho correto.
+      # -----------------------------------------------------------------------
+      - name: Export kubeconfig path
+        run: |
+          echo "KUBECONFIG_PATH=/tmp/kubeconfig/config" >> $GITHUB_ENV
+          echo "KUBECONFIG=/tmp/kubeconfig/config" >> $GITHUB_ENV
+
+
+      - name: Verify kubeconfig server IP
+        run: |
+          IP=$(cat /tmp/aws-outputs/ec2_public_ip.txt)
+          echo "EC2 Public IP: ${IP}"
+
+          grep "server:" /tmp/kubeconfig/config || true
+          sed -i "s|https://127.0.0.1:6443|https://${IP}:6443|" /tmp/kubeconfig/config
+          echo "ok. kubeconfig server adjusted to https://${IP}:6443"
+
+      - name: Terraform Init
+        run: terraform init
+
+      # -----------------------------------------------------------------------
+      # TERRAFORM APPLY (REDE BESU)
+      # -----------------------------------------------------------------------
+      # Passamos a variável kubeconfig_path apontando para o kubeconfig
+      # da EC2. O restante (genesis, nodes, etc.) já está no terraform.tfvars.
+      # -----------------------------------------------------------------------
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var="kubeconfig_path=${{ env.KUBECONFIG_PATH }}"
+
+  # ===========================================================================
+  # JOB 3: SMOKE TEST REMOTO
+  # ===========================================================================
+  # Proposito: validar que a rede Besu subiu e está minerando blocos.
+  # ===========================================================================
+  smoke-test:
+    name: Smoke Test Remote Besu Network
+    runs-on: ubuntu-latest
+    needs: deploy-besu
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download kubeconfig
+        uses: actions/download-artifact@v4
+        with:
+          name: kubeconfig
+          path: /tmp/kubeconfig
+
+      - name: Run Smoke Test
+        env:
+          KUBECONFIG: /tmp/kubeconfig/config
+        run: bash scripts/smoke-test-aws.sh

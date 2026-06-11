@@ -16,8 +16,6 @@ locals {
     "--Xdns-update-enabled=true"
   ]
 
-  #boot_args = #var.node_type == "boot" ? ["--bootnode"] : []
-
   static_nodes_args = var.static_nodes_configmap_name != "" ? ["--static-nodes-file=/etc/besu/static-nodes.json"] : []
 
   besu_args = concat(local.base_args, local.static_nodes_args)
@@ -90,6 +88,26 @@ resource "kubernetes_stateful_set" "besu_node" {
             mount_path = "/var/lib/besu"
           }
 
+          resources {
+            requests = {
+              cpu    = var.cpu_request
+              memory = var.memory_request
+            }
+            limits = {
+              cpu    = var.cpu_limit
+              memory = var.memory_limit
+            }
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/liveness"
+              port = 8545
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 30
+          }
+
 
         }
 
@@ -98,7 +116,6 @@ resource "kubernetes_stateful_set" "besu_node" {
         volume {
           name = "genesis"
           config_map {
-            #name = kubernetes_config_map.besu_config.metadata[0].name
             name = var.genesis_configmap_name
           }
         }
@@ -106,7 +123,6 @@ resource "kubernetes_stateful_set" "besu_node" {
         volume {
           name = "nodekey" # change
           secret {
-            #secret_name = kubernetes_secret.besu_key.metadata[0].name
             secret_name = var.node_secret_name
           }
         }

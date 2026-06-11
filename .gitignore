@@ -2,7 +2,7 @@
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
-start-network
+start-network/
 roteiro.md
 sugestoes-week2.md
 summary.md
@@ -18,3 +18,8 @@ plan-week4.md
 progresso-semana2-checkpoint.md
 commands.md
 actions-runner/
+plan-week5.md
+progresso-semana3-checkpoint.md
+progresso-semana4-checkpoint.md
+skill-overview.md
+.terraform/
