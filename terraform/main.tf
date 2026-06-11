@@ -30,12 +30,7 @@ module "besu_node" {
   genesis_configmap_name      = kubernetes_config_map.besu_genesis_config.metadata[0].name
   static_nodes_configmap_name = kubernetes_config_map.besu_genesis_config.metadata[0].name
   node_secret_name            = kubernetes_secret.besu_node_key[each.key].metadata[0].name
+
+  memory_request = "256Mi"
+  memory_limit   = "512Mi"
 }
-
-
-#module "besu_node" {
-#  source = "./modules/besu-node"
-
-#  genesis_json_path = var.genesis_json_path
-#  node_key_path     = var.node_key_path
-#}

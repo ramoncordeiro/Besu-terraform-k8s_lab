@@ -43,14 +43,27 @@ variable "replicas" {
   default     = 1
 }
 
-/*
-variable "genesis_json_path" {
-    description = " Genesis.json path"
-    type = string
+
+variable "cpu_request" {
+  description = "CPU request for Besu Container"
+  type        = string
+  default     = "100m"
 }
 
-variable "node_key_path" {
-    description = "node key path"
-    type = string
-}*/
+variable "memory_request" {
+  description = "Memory request for Besu Container"
+  type        = string
+  default     = "128Mi"
+}
 
+variable "cpu_limit" {
+  description = "CPU limit for Besu container"
+  type        = string
+  default     = "200m"
+}
+
+variable "memory_limit" {
+  description = "Memory limit for Besu container"
+  type        = string
+  default     = "256Mi"
+}
